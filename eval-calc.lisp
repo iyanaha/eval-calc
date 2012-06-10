@@ -254,11 +254,14 @@
 	((eql line :eof) (nreverse acc))
 	(push line acc)))))
 
+(defun partly-remove-if (fn lst)
+  (cond ((null lst) nil)
+	((not (funcall fn (car lst))) lst)
+	(t (partly-remove-if fn (cdr lst)))))
+
 (defun gen (lst)
   (cond ((declare-statement? (car lst))
-	 (multiple-value-bind (var-name expr) (extract-var-name-and-expr (car lst))
-	   `(let ((,(intern var-name) ,(convert-str expr)))
-	      ,(gen (cdr lst)))))
+	 (gen-let* lst (gen (partly-remove-if #'declare-statement? lst))))
 	((define-statement? (car lst))
 	 (multiple-value-bind (fn-name args expr) (extract-fn-name-args-and-expr (car lst))
 	   `(labels ((,(intern fn-name) ,args ,(convert-str expr)))
@@ -270,6 +273,19 @@
 	   `(let ((,(intern dest-name) #',(intern source-name)))
 	      ,(gen (cdr lst)))))
 	(t (convert-str (car lst)))))
+
+(defun gen-let* (lst result)
+  (labels ((g-let* (lst vars exprs)
+		   (if (not (declare-statement? (car lst)))
+		     `(let* ,(nreverse (mapcar #'(lambda (var expr) (list var expr))
+					       vars exprs))
+			,result)
+		     (multiple-value-bind (var expr) (extract-var-and-expr (car lst))
+		       (g-let* (cdr lst) (cons var vars) (cons expr exprs))))))
+    (if (declare-statement? (second lst))
+      (g-let* lst nil nil)
+      (multiple-value-bind (var expr) (extract-var-and-expr (car lst))
+	`(let ((,var ,expr)) ,result)))))
 
 (defun gen-code (filename)
   (gen (list-lines filename)))
@@ -345,12 +361,11 @@
 (defun alpha-char= (c1 c2)
   (char= (char-downcase c1) (char-downcase c2)))
 
-(defun extract-var-name-and-expr (str)
+(defun extract-var-and-expr (str)
   (let ((pos (position #\= str)))
-    (values (string-upcase
-	      (extract-alpha-chars 
-		(remove-white-spaces (subseq str 0 pos))))
-	    (subseq str (1+ pos)))))
+    (values (intern (extract-non-white-space-chars1
+		      (remove-white-spaces (subseq str 0 pos))))
+	    (convert-str (subseq str (1+ pos))))))
 
 (defun extract-alpha-chars (str)
   (let ((len 0))
