@@ -1,5 +1,4 @@
-; unnecessary
-(defmacro l ()
+:w(defmacro l ()
   `(load "eval-calc.lisp"))
 
 (defun extract-parenthesis (str)
@@ -20,18 +19,18 @@
 	 (let ((,c (char ,str-var ,count-var)))
 	   ,@body)))))
 
-(defun remove-punctuations (str)
+(defun remove-white-spaces (str)
   (let ((len 0))
     (do-char-in-str (c str)
-		    (if (punctuation-p c)
+		    (if (white-space-p c)
 		      (incf len)
 		      (return)))
     (subseq str len)))
 
-(defconstant punctuations '(#\Space #\Newline #\Tab))
+(defconstant white-spaces '(#\Space #\Newline #\Tab))
 
-(defun punctuation-p (c)
-  (member c punctuations))
+(defun white-space-p (c)
+  (member c white-spaces))
 
 (defun number-char/dot-p (c)
   (or (char= c #\.)
@@ -96,6 +95,8 @@
 
 (defconstant fn-mark (gensym))
 
+(defparameter alias-names nil)
+
 (defun extract (str)
   (labels ((ext (str)
 		(cond ((operator-p (strcar str))
@@ -104,18 +105,23 @@
 		       (extract-number str))
 		      ((function-call-p str)
 		       (multiple-value-bind (fn-name args rest) (extract-fn-name-and-args str)
-			 (values (list* fn-mark
-					(intern fn-name) 
-					(mapcar #'convert-str args))
-				 rest)))
+			 (if (member (intern fn-name) alias-names)
+			   (values (list* fn-mark
+					  'funcall
+					  (intern fn-name)
+					  (mapcar #'convert-str args)))
+			   (values (list* fn-mark
+					  (intern fn-name) 
+					  (mapcar #'convert-str args))
+				   rest))))
 		      ((var-p str)
-		       (multiple-value-bind (var-name rest) (extract-alpha-chars str)
-			 (values (intern (string-upcase var-name)) rest)))
+		       (multiple-value-bind (var-name rest) (extract-alpha-chars1 str)
+			 (values (intern var-name) rest)))
 		      ((char= (strcar str) #\()
 		       (multiple-value-bind (val rest) (extract-parenthesis str)
 			 (values (str->list (extract-content val))
 				 rest))))))
-    (ext (remove-punctuations str))))
+    (ext (remove-white-spaces str))))
 
 (defun extract-fn-name-and-args (str)
   (let ((pos (position #\( str)))
@@ -126,24 +132,24 @@
 
 (defun function-call-p (str)
   (and (alpha-char-p (strcar str))
-       (find #\( (extract-non-punctuation-chars str))))
+       (find #\( (extract-non-white-space-chars str))))
 
 (defun only-function-call-p (str)
   (and (function-call-p str)
        (multiple-value-bind1 (nil rest) (extract-alpha-chars str)
 			     (multiple-value-bind1 (nil rest1) (extract-parenthesis rest)
-						   (only-punctuations-p rest1)))))
+						   (only-white-spaces-p rest1)))))
 
 (defun var-p (str)
   (and (alpha-char-p (strcar str))
-       (not (find #\( (extract-non-punctuation-chars str)))))
+       (not (find #\( (extract-non-white-space-chars str)))))
 
 (defun extract-content (str)
   (strcdr (strbutlast str)))
 
 (defun str->list (str)
   (labels ((s->l (str)
-		 (if (only-punctuations-p str)
+		 (if (only-white-spaces-p str)
 		   nil
 		   (multiple-value-bind (val rest) (extract str)
 		     (cons val (s->l rest))))))
@@ -152,12 +158,12 @@
 			    val)
       (s->l str))))
 
-(defun only-punctuations-p (str)
-  (let ((only-punctuations? t))
+(defun only-white-spaces-p (str)
+  (let ((only-white-spaces? t))
     (do-char-in-str (c str)
-		    (if (not (punctuation-p c))
-		      (setf only-punctuations? nil)))
-    only-punctuations?))
+		    (if (not (white-space-p c))
+		      (setf only-white-spaces? nil)))
+    only-white-spaces?))
 
 (defun *-/-member? (lst)
   (or (member '* lst) (member '/ lst)))
@@ -257,6 +263,12 @@
 	 (multiple-value-bind (fn-name args expr) (extract-fn-name-args-and-expr (car lst))
 	   `(labels ((,(intern fn-name) ,args ,(convert-str expr)))
 	      ,(gen (cdr lst)))))
+	((alias-statement? (car lst))
+	 (multiple-value-bind (dest-name source-name) (extract-alias-names (car lst))
+	   (format t "dest = ~A, source = ~A~%" dest-name source-name)
+	   (push (intern dest-name) alias-names)
+	   `(let ((,(intern dest-name) #',(intern source-name)))
+	      ,(gen (cdr lst)))))
 	(t (convert-str (car lst)))))
 
 (defun gen-code (filename)
@@ -266,33 +278,42 @@
   (find #\= str))
 
 (defun define-statement? (str)
-  (start-with? "DEF" (remove-punctuations str)))
+  (start-with? "DEF" (remove-white-spaces str)))
+
+(defun alias-statement? (str)
+  (start-with? "ALIAS" (remove-white-spaces str)))
+
+(defun extract-alias-names (str)
+  (multiple-value-bind1 (nil rest) (extract-alpha-chars str)
+			(multiple-value-bind (dest-name rest1) (extract-non-white-space-chars1
+								 (remove-white-spaces rest))
+			  (values dest-name (extract-non-white-space-chars1 (remove-white-spaces rest1))))))
 
 (defun extract-fn-name-args-and-expr (str)
   (multiple-value-bind1 (nil rest) (extract-alpha-chars str)
-			(multiple-value-bind (fn-name rest1) (extract-alpha-chars1
-							       (remove-punctuations rest))
+			(multiple-value-bind (fn-name rest1) (extract-non-white-space-chars1
+							       (remove-white-spaces rest))
 			  (multiple-value-bind (pare expr) (extract-parenthesis
-							     (remove-punctuations rest1))
+							     (remove-white-spaces rest1))
 			    (values fn-name
 				    (mapcar #'intern 
 					    (mapcar #'string-upcase (extract-arguments pare)))
 				    expr)))))
 
-(defun remove-punctuations-and-comma (str)
+(defun remove-white-spaces-and-comma (str)
   (let ((len 0))
     (do-char-in-str (c str)
-		    (if (or (char= c #\,) (punctuation-p c))
+		    (if (or (char= c #\,) (white-space-p c))
 		      (incf len)
 		      (return)))
     (subseq str len)))
 
 (defun extract-arguments (str)
   (labels ((ext (content)
-		(if (only-punctuations-p content)
+		(if (only-white-spaces-p content)
 		  nil
 		  (multiple-value-bind (arg rest) (extract-chars-until-comma content)
-		    (cons arg (ext (remove-punctuations-and-comma rest)))))))
+		    (cons arg (ext (remove-white-spaces-and-comma rest)))))))
     (ext (extract-content str))))
 
 (defun extract-chars-until-comma (str)
@@ -328,7 +349,7 @@
   (let ((pos (position #\= str)))
     (values (string-upcase
 	      (extract-alpha-chars 
-		(remove-punctuations (subseq str 0 pos))))
+		(remove-white-spaces (subseq str 0 pos))))
 	    (subseq str (1+ pos)))))
 
 (defun extract-alpha-chars (str)
@@ -344,14 +365,18 @@
   (multiple-value-bind (val rest) (extract-alpha-chars str)
     (values (string-upcase val) rest)))
 
-(defun extract-non-punctuation-chars (str)
+(defun extract-non-white-space-chars (str)
   (let ((len 0))
     (do-char-in-str (c str)
-		    (if (punctuation-p c)
+		    (if (white-space-p c)
 		      (return)
 		      (incf len)))
     (values (subseq str 0 len)
 	    (subseq str len))))
+
+(defun extract-non-white-space-chars1 (str)
+  (multiple-value-bind (val rest) (extract-non-white-space-chars str)
+    (values (string-upcase val) rest)))
 
 (defun eval-calc (filename)
   (eval (gen-code filename)))
