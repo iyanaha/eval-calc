@@ -1,6 +1,3 @@
-(defmacro l ()
-  `(load "eval-calc.lisp"))
-
 (defun extract-parenthesis (str)
   (let ((depth 0) (len 0))
     (do-char-in-str (c str)
