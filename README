@@ -1,0 +1,14 @@
+This is a programming language based on Common Lisp.
+It's syntax is quite simple. Examples are as follows.
+
+#test.ec
+x = 100 * 100
+y = x
+x + y
+
+#test2.ec
+x = 100 * 100
+y = x * 2
+def fn (x, y) x + y + 100
+alias fn2 fn
+fn2(x, y)
