@@ -1,3 +1,4 @@
+; unnecessary
 (defmacro l ()
   `(load "eval-calc.lisp"))
 
